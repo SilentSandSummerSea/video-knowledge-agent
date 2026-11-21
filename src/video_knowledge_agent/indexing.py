@@ -53,14 +53,12 @@ _CJK_RUN = re.compile(
     r"\uac00-\ud7af\uff66-\uff9f]+"
 )
 _WORD = re.compile(r"[A-Za-z0-9_]+")
-_QUERY_EXPANSIONS = {
-    "净赚": ("净利润", "利润", "收益"),
-    "多少钱": ("金额", "金币", "费用", "收入", "利润"),
-    "成本": ("费用", "支出", "成本"),
-    "家属": ("家庭", "遗属", "家属"),
-    "分配": ("分成", "份额", "分配"),
-    "赚钱": ("利润", "收益", "收入"),
-}
+_QUESTION_PHRASES = re.compile(
+    r"在哪里|在哪儿|在哪|哪里|什么|为什么|为何|怎么|如何|多少|"
+    r"どこ|どの|なぜ|どう|いつ|何ですか|ですか|ますか|"
+    r"\b(?:where|what|which|how|why|when|is|are|the|a|an|do|does)\b",
+    re.IGNORECASE,
+)
 
 
 def _search_tokens(text: str) -> str:
@@ -92,6 +90,7 @@ def _document_id(*parts: object) -> str:
 def _chapter_documents(video_dir: Path, metadata: dict[str, Any]) -> Iterable[dict[str, Any]]:
     video_id = str(metadata.get("video_id") or video_dir.name)
     source_url = str(metadata.get("source_url") or "")
+    video_title = str(metadata.get("title") or "")
     for chapter in metadata.get("chapters", []):
         relative = str(chapter["file"])
         path = (video_dir / relative).resolve()
@@ -101,7 +100,7 @@ def _chapter_documents(video_dir: Path, metadata: dict[str, Any]) -> Iterable[di
             raise IndexingError(f"cannot read published chapter {path}: {exc}") from exc
         chapter_id = int(chapter["id"])
         title = str(chapter["title"])
-        keywords = " ".join(map(str, chapter.get("topics", [])))
+        keywords = " ".join([video_title, *map(str, chapter.get("topics", []))])
         yield {
             "id": _document_id(video_id, "chapter", chapter_id),
             "video_id": video_id,
@@ -126,6 +125,7 @@ def _knowledge_documents(video_dir: Path, metadata: dict[str, Any]) -> Iterable[
     language = str(payload.get("output_language") or metadata.get("output_language") or "zh").casefold()
     evidence_label = "根拠：" if language in {"ja", "jpn", "japanese"} else "Evidence: " if language in {"en", "eng", "english"} else "证据："
     video_id = str(metadata.get("video_id") or video_dir.name)
+    video_title = str(metadata.get("title") or "")
     chapter_meta = {int(item["id"]): item for item in metadata.get("chapters", [])}
     for chapter in payload.get("chapters", []):
         chapter_id = int(chapter["chapter_id"])
@@ -143,7 +143,7 @@ def _knowledge_documents(video_dir: Path, metadata: dict[str, Any]) -> Iterable[
                 "chapter_id": chapter_id,
                 "title": title,
                 "content": content,
-                "keywords": " ".join(map(str, item.get("keywords", []))),
+                "keywords": " ".join([video_title, *map(str, item.get("keywords", []))]),
                 "source_url": str(item.get("source_url") or metadata.get("source_url") or ""),
                 "start_seconds": float(item.get("start_seconds", 0)),
                 "end_seconds": float(item.get("end_seconds", 0)),
@@ -158,6 +158,7 @@ def _moment_documents(video_dir: Path, metadata: dict[str, Any]) -> Iterable[dic
     path = (video_dir / str(relative)).resolve()
     payload = _read_json(path)
     video_id = str(metadata.get("video_id") or video_dir.name)
+    video_title = str(metadata.get("title") or "")
     if payload.get("video_id") != video_id or not isinstance(payload.get("moments"), list):
         raise IndexingError(f"invalid published moments in {path}")
     chapters = {int(item["id"]): item for item in metadata.get("chapters", [])}
@@ -176,7 +177,7 @@ def _moment_documents(video_dir: Path, metadata: dict[str, Any]) -> Iterable[dic
             "chapter_id": chapter_id,
             "title": str(chapter["title"]),
             "content": text,
-            "keywords": " ".join(map(str, chapter.get("topics", []))),
+            "keywords": " ".join([video_title, *map(str, chapter.get("topics", []))]),
             "source_url": str(item["source_url"]),
             "start_seconds": float(item["start_seconds"]),
             "end_seconds": float(item["end_seconds"]),
@@ -278,55 +279,51 @@ def build_index(
     return IndexArtifact(database, video_count, chapter_count, knowledge_count, moment_count)
 
 
+def _query_terms(query: str) -> list[str]:
+    meaningful = _QUESTION_PHRASES.sub(" ", query.casefold())
+    # A Japanese topic particle left after removing a question phrase is not
+    # part of the searched noun (e.g. 店はどこ -> 店).
+    meaningful = re.sub(r"(?<=[\u3400-\u9fff])[はがをにの](?=\s|$)", " ", meaningful)
+    return list(dict.fromkeys(_search_tokens(meaningful).split()))
+
+
 def _match_query(query: str) -> str:
-    tokens = _search_tokens(query).split()
-    useful = [token for token in tokens if len(token) >= 2 or len(tokens) == 1]
+    terms = _query_terms(query)
+    useful = [term for term in terms if len(term) >= 2 or len(terms) == 1]
     if not useful:
-        useful = tokens
-    return " OR ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in useful)
+        useful = terms
+    return " OR ".join(
+        f'"{token.replace(chr(34), chr(34) * 2)}"' for token in useful
+    )
 
 
-def _expanded_query(query: str) -> tuple[str, list[str]]:
-    additions: list[str] = []
-    for phrase, synonyms in _QUERY_EXPANSIONS.items():
-        if phrase in query:
-            additions.extend(synonyms)
-    additions = list(dict.fromkeys(additions))
-    return " ".join([query, *additions]), additions
+def _rerank_score(row: sqlite3.Row, query: str) -> float:
+    terms = _query_terms(query)
+    if not terms:
+        return 0.0
+    title = str(row["title"]).casefold()
+    content = str(row["content"]).casefold()
+    keywords = str(row["keywords"]).casefold()
+    weights = {term: 0.5 if len(term) == 1 else min(len(term), 3) for term in terms}
+    total = sum(weights.values())
 
+    def coverage(value: str) -> float:
+        return sum(weight for term, weight in weights.items() if term in value) / total
 
-def _rerank_score(row: sqlite3.Row, query: str, expansions: list[str]) -> float:
-    searchable = " ".join(
-        [str(row["title"]), str(row["content"]), str(row["keywords"])]
-    ).lower()
-    body_searchable = " ".join(
-        [str(row["content"]), str(row["keywords"])]
-    ).lower()
-    units: list[str] = []
-    for match in _CJK_RUN.finditer(query):
-        value = match.group(0)
-        units.extend(value[index : index + 2] for index in range(len(value) - 1))
-        units.extend(value[index : index + 3] for index in range(len(value) - 2))
-    units.extend(word.lower() for word in _WORD.findall(query))
-    score = sum((2.0 if len(unit) >= 3 else 1.0) for unit in set(units) if unit in searchable)
-    score += sum(3.0 for value in expansions if value.lower() in body_searchable)
-    if query.lower() in searchable:
-        score += 12.0
-    if str(row["kind"]) != "chapter":
-        score += 5.0
-    if "净赚" in query and "净利润" in body_searchable:
-        score += 25.0 if str(row["kind"]) != "chapter" else 8.0
-    if "净赚" in query and "净利润是" in body_searchable:
-        score += 20.0
-    if "家属" in query and any(value in body_searchable for value in ("家属", "家庭", "遗属")):
-        score += 12.0
-    if "阵亡" in query and any(value in body_searchable for value in ("阵亡", "死者")):
-        score += 8.0
-    if "多少钱" in query and str(row["kind"]) == "number":
-        score += 4.0
-    if any(cue in query for cue in ("哪些", "如何", "为什么")) and str(row["kind"]) != "chapter":
-        score += 2.0
-    score += max(0.0, -float(row["rank"])) * 0.01
+    body_coverage = coverage(content)
+    # Covering distinct query terms across the video title and the passage is
+    # more useful than repeating one term in several fields.
+    score = (
+        12.0 * coverage(" ".join([title, content, keywords]))
+        + 2.0 * coverage(title)
+        + 2.0 * body_coverage
+        + coverage(keywords)
+    )
+    # A short evidence item is more precise than an entire chapter when both
+    # cover the same query; BM25 breaks ties using corpus frequency and length.
+    if body_coverage and str(row["kind"]) != "chapter":
+        score += 1.0
+    score += min(2.0, max(0.0, -float(row["rank"])) * 0.05)
     return score
 
 
@@ -344,8 +341,9 @@ def search_index(
     database = Path(database_path).resolve()
     if not database.is_file():
         raise ValueError(f"index database does not exist: {database}")
-    expanded, expansions = _expanded_query(query)
-    match = _match_query(expanded)
+    match = _match_query(query)
+    if not match:
+        return []
     try:
         with closing(_connect(database)) as connection:
             rows = connection.execute(
@@ -363,7 +361,7 @@ def search_index(
         raise IndexingError(f"cannot search SQLite FTS5 index: {exc}") from exc
     ranked = sorted(
         rows,
-        key=lambda row: _rerank_score(row, query, expansions),
+        key=lambda row: _rerank_score(row, query),
         reverse=True,
     )[:limit]
     return [
@@ -377,7 +375,7 @@ def search_index(
             source_url=str(row["source_url"]),
             start_seconds=float(row["start_seconds"]),
             end_seconds=float(row["end_seconds"]),
-            score=_rerank_score(row, query, expansions),
+            score=_rerank_score(row, query),
             file_path=str(row["file_path"]),
         )
         for row in ranked

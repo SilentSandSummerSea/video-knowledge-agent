@@ -7,6 +7,43 @@ from video_knowledge_agent.indexing import build_index, search_index
 
 
 class IndexingTests(unittest.TestCase):
+    def test_ranking_uses_subject_terms_and_video_title_across_topics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            published = root / "published"
+
+            def add_video(video_id: str, video_title: str, chapter_title: str, content: str):
+                video = published / video_id
+                chapters = video / "chapters"
+                chapters.mkdir(parents=True)
+                (chapters / "01.md").write_text(content, encoding="utf-8")
+                (video / "metadata.json").write_text(
+                    json.dumps({
+                        "video_id": video_id,
+                        "title": video_title,
+                        "source_url": f"https://example.com/{video_id}",
+                        "chapters": [{
+                            "id": 1, "title": chapter_title, "file": "chapters/01.md",
+                            "start_seconds": 0, "end_seconds": 30, "topics": [],
+                        }],
+                    }, ensure_ascii=False), encoding="utf-8",
+                )
+
+            add_video("guide", "鬼武者攻略", "商店兑换", "在商店兑换道具。")
+            add_video("commentary", "鬼武者评论", "鬼武者评测", "鬼武者的动作系统。")
+            add_video("path", "关卡路线设计", "位置选择", "玩家在哪里站立会影响视线。")
+            add_video("baking", "Bread baking", "Dough fermentation", "The dough doubles in size.")
+            add_video("question", "Question writing", "Where to begin", "Where should a question begin?")
+            add_video("profit", "项目结算", "净利润", "净利润为三十金币。")
+            add_video("expense", "游戏经济", "金币支出", "金币成本为二十。")
+            database = build_index(published, root / "knowledge.db").database_path
+
+            self.assertEqual(search_index("鬼武者商店在哪里", database, limit=1)[0].video_id, "guide")
+            self.assertEqual(search_index("店はどこ", database, limit=1)[0].video_id, "guide")
+            self.assertEqual(search_index("Where is the dough?", database, limit=1)[0].video_id, "baking")
+            self.assertEqual(search_index("净赚多少金币", database, limit=1)[0].video_id, "profit")
+            self.assertEqual(search_index("在哪里", database), [])
+
     def test_builds_and_searches_chinese_knowledge(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from .answering import AnsweringError, answer_question
 from .audio import LocalMediaError, prepare_local_audio
 from .chaptering import ChapteringError, extract_chapters
 from .groq_transcription import transcribe_audio_groq_chunked
@@ -183,6 +184,21 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("query")
     search.add_argument("--database", default="data/index/knowledge.db")
     search.add_argument("--limit", type=int, default=8)
+
+    answer = subparsers.add_parser(
+        "answer", help="Answer from indexed speech and on-demand visual evidence"
+    )
+    answer.add_argument("question")
+    answer.add_argument("--database", default="data/index/knowledge.db")
+    answer.add_argument("--work-dir", default="data/work")
+    answer.add_argument("--knowledge-dir", default="data/outputs/knowledge")
+    answer.add_argument("--clips-dir", default="data/outputs/clips")
+    answer.add_argument("--text-provider", choices=("deepseek", "local"), default=None)
+    answer.add_argument("--model", default=None)
+    answer.add_argument("--visual-mode", choices=("auto", "off", "ocr", "frames"), default="auto")
+    answer.add_argument("--answer-language", choices=("zh", "en", "ja"), default="zh")
+    answer.add_argument("--limit", type=int, default=4)
+    answer.add_argument("--format", choices=("markdown", "json"), default="markdown")
     return parser
 
 
@@ -369,6 +385,21 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+    if args.command == "answer":
+        try:
+            result = answer_question(
+                args.question, database_path=args.database,
+                work_root=args.work_dir, knowledge_root=args.knowledge_dir,
+                clips_root=args.clips_dir, visual_mode=args.visual_mode,
+                answer_language=args.answer_language, limit=args.limit,
+                text_provider=args.text_provider, model=args.model,
+            )
+        except (AnsweringError, IndexingError, VideoClipError, VisualOcrError, ValueError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2) if args.format == "json"
+              else result["answer_markdown"])
         return 0
     return 2
 

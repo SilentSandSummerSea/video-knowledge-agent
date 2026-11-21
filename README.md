@@ -42,16 +42,19 @@ Run data is stored under `data/raw/`, `data/work/`, `data/outputs/`, and `data/i
 ## Retrieval and visual evidence
 
 ```powershell
+python -m video_knowledge_agent.cli answer "Where is the shop?" --answer-language en
 python -m video_knowledge_agent.cli search "your question"
 python -m video_knowledge_agent.cli clip-moment-video <video_id> --moment-id <moment_id>
 python -m video_knowledge_agent.cli ocr-moment <clip-file-path-from-previous-command>
 ```
 
-Chapters, structured knowledge, and timestamped Moments are indexed with SQLite FTS5. When the source includes video and visual evidence is needed, the system extracts only the matching time window instead of processing every frame of the full video. Audio-only inputs cannot provide visual clips or OCR. By default, audio is uploaded in 120-second core chunks with about five seconds of context at each end. Output remains in the source language by default. A player or an upstream agent must resolve internal timestamp references before playback.
+Chapters, structured knowledge, and timestamped Moments are indexed with SQLite FTS5. `answer` retrieves nearby corrected speech and uses the selected text provider to write an answer with checked evidence links (Chinese by default; use `--answer-language en|ja` for English or Japanese). For visual questions it extracts only the matching video window, adds time-aligned OCR, and can send up to two selected frames to DeepSeek Flash when the question requires direct visual judgment. Use `--visual-mode off|ocr|frames` to override automatic selection and `--format json` for programmatic output and usage estimates. Audio-only inputs cannot provide visual evidence; the answer states that limitation. Each answer call may incur API charges in DeepSeek mode. By default, audio is uploaded in 120-second core chunks with about five seconds of context at each end. Stored knowledge remains in the source language. A player or an upstream agent must resolve internal timestamp references before playback.
 
 ## Usage notice and disclaimer
 
 Use this tool only with media you are authorized to process. You are responsible for copyright, platform terms, privacy, and API charges. In API mode, audio is sent to Groq for transcription and text to DeepSeek for analysis. In local mode, the configured faster-whisper and loopback Ollama models process them on your computer. Check the selected providers before processing sensitive content. Do not use it to bypass DRM or access restrictions, and do not redistribute source media, clips, or substantial transcript text without the necessary rights. ASR and model-generated summaries may be inaccurate; verify important claims against the cited source and timestamp. The software is provided as-is, without legal advice or a guarantee of accuracy or availability. Keep `.env` private, and rotate any key that is exposed.
+
+For visual answers, up to two selected frames may also be sent to DeepSeek Flash. OCR text and generated answers can be wrong; check the linked frame and source when accuracy matters.
 
 ## Verification
 
@@ -104,16 +107,19 @@ python -m video_knowledge_agent.cli prepare-audio "D:\videos\my-video.mp4"
 ## 检索与画面证据
 
 ```powershell
+python -m video_knowledge_agent.cli answer "商店在哪条路？"
 python -m video_knowledge_agent.cli search "要查的问题"
 python -m video_knowledge_agent.cli clip-moment-video <video_id> --moment-id <moment_id>
 python -m video_knowledge_agent.cli ocr-moment <上一步返回的clip文件路径>
 ```
 
-章节、结构化知识及带时间戳的 Moment 进入 SQLite FTS5 索引。输入包含视频且需要画面证据时，只截取命中的时间窗，不逐帧处理整部视频；只有音频输入时不能截画面或 OCR。音频默认切成 120 秒核心片段并在两端各保留约 5 秒上下文上传；默认输出保持源语言。内部时间引用由播放器或上层 Agent 解析后再跳转。
+章节、结构化知识及带时间戳的 Moment 进入 SQLite FTS5 索引。`answer` 检索校对后的语音上下文，用当前文字模型生成中文回答，时间链接由程序核对生成。画面问题只截取命中的时间窗，加入对齐的 OCR；确实要判断画面时，可向 DeepSeek Flash 发送最多两张关键帧。可用 `--visual-mode off|ocr|frames` 覆盖自动判断，`--format json` 返回结构化结果和用量估算。只有音频输入时，回答会说明无法核对画面。DeepSeek 模式下每次回答可能产生 API 费用。音频默认切成 120 秒核心片段并在两端各保留约 5 秒上下文上传；知识文件默认保持源语言。内部时间引用由播放器或上层 Agent 解析后再跳转。
 
 ## 使用声明与免责声明
 
 仅处理你有权使用的素材；版权、平台条款、隐私和 API 费用由使用者自行核对与承担。API 模式会将音频发送给 Groq 转写、文字发送给 DeepSeek 分析；本地模式使用本机的 faster-whisper 和回环地址上的 Ollama。处理敏感内容前应确认所选模式。请勿用它绕过 DRM 或访问限制；未取得相应权利时，不要再分发原媒体、片段或大段转写文本。ASR 与模型总结可能出错，重要结论须回看原始素材及所附时间戳。本软件按现状提供，不构成法律意见，也不保证准确性或服务可用性。请妥善保管 `.env`；密钥泄露后应及时轮换。
+
+画面问答还可能向 DeepSeek Flash 发送最多两张关键帧。OCR 和生成的回答都可能出错，重要结论请核对所附截图与来源。
 
 ## 验证
 
@@ -165,16 +171,19 @@ python -m video_knowledge_agent.cli prepare-audio "D:\videos\my-video.mp4"
 ## 検索と映像の根拠
 
 ```powershell
+python -m video_knowledge_agent.cli answer "店はどの通りにありますか？" --answer-language ja
 python -m video_knowledge_agent.cli search "質問文"
 python -m video_knowledge_agent.cli clip-moment-video <video_id> --moment-id <moment_id>
 python -m video_knowledge_agent.cli ocr-moment <前のコマンドで返されたクリップのパス>
 ```
 
-章、構造化知識、時刻付き Moment は SQLite FTS5 に登録されます。入力に映像が含まれ、画面上の根拠が必要な場合に、その時間帯だけを切り出します。音声だけの入力では映像クリップや OCR を利用できません。音声は既定で 120 秒の主要区間に分け、各区間の前後に約 5 秒の文脈を付けてアップロードします。出力は既定で原語のまま保持します。内部時刻参照の解決はプレーヤーまたは上位のエージェントが担当します。
+章、構造化知識、時刻付き Moment は SQLite FTS5 に登録されます。`answer` は校正済み音声の前後関係を検索し、選択したテキストモデルで根拠リンク付きの回答を作成します（既定は中国語。英語・日本語は `--answer-language en|ja`）。映像についての質問では該当時間帯だけを切り出して OCR を照合し、画面そのものの判断が必要なら DeepSeek Flash に最大 2 枚のキーフレームを送れます。`--visual-mode off|ocr|frames` で自動判定を変更でき、`--format json` で構造化結果と使用量の推定を確認できます。音声だけの入力では映像を確認できない旨を回答に示します。DeepSeek モードの回答ごとに API 料金が発生する場合があります。音声は既定で 120 秒の主要区間に分け、各区間の前後に約 5 秒の文脈を付けてアップロードします。保存する知識は既定で原語のまま保持します。内部時刻参照の解決はプレーヤーまたは上位のエージェントが担当します。
 
 ## 利用上の注意と免責事項
 
 権利を持つ素材だけを処理してください。著作権、プラットフォームの規約、プライバシー、API 料金の確認と負担は利用者の責任です。API モードでは音声を Groq、テキストを DeepSeek に送信します。ローカルモードでは faster-whisper とループバック接続の Ollama を使います。機密情報を処理する前に選択したモードを確認してください。DRM やアクセス制限の回避に使わず、必要な権利なしに元メディア、クリップ、長い書き起こしを再配布しないでください。ASR やモデルの要約には誤りがあり得るため、重要な内容は元資料とタイムスタンプで確認してください。本ソフトウェアは現状有姿で提供され、法律上の助言、正確性、サービスの継続性を保証しません。`.env` を非公開に保ち、キーが漏えいした場合は更新してください。
+
+映像についての回答では、選択したキーフレームを最大 2 枚まで DeepSeek Flash に送信する場合があります。OCR と生成された回答には誤りがあり得るため、重要な内容は添付画像と元資料で確認してください。
 
 ## 検証
 

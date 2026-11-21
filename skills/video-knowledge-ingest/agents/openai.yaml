@@ -1,0 +1,6 @@
+interface:
+  display_name: "Video Knowledge Ingest"
+  short_description: "Process a local video file into the knowledge base"
+  default_prompt: "Use $video-knowledge-ingest to process this video and add it to my knowledge base."
+policy:
+  allow_implicit_invocation: true

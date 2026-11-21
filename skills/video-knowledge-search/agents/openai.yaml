@@ -1,0 +1,6 @@
+interface:
+  display_name: "Video Knowledge Search"
+  short_description: "Search the local video knowledge base with evidence"
+  default_prompt: "Use $video-knowledge-search to answer my question from the local video knowledge base."
+policy:
+  allow_implicit_invocation: true
